@@ -1,0 +1,129 @@
+type key.
+type nonce.
+type host.
+
+fun Hash(bitstring,key):bitstring.
+fun Hash1(nonce,bitstring,key):bitstring.
+fun Hash2(nonce,nonce,bitstring,key):bitstring.
+
+fun senc(bitstring,key):bitstring.
+reduc forall m:bitstring,k:key; sdec(senc(m,k),k) = m.
+
+fun host_to_bitstring(host):bitstring [data, typeConverter].
+fun bitstring_to_host(bitstring):host [data,typeConverter].
+
+free c:channel.
+free k_s:bitstring [private].
+free test:bitstring [private].
+
+event serverAccepts(bitstring,key).
+event serverTerms1(bitstring,key).
+event serverTerms2(bitstring,key).
+event IOTAccepts(bitstring,key).
+event IOTTerms(bitstring,key).
+event phoneAccepts(bitstring,key).
+event phoneTerms(bitstring,key).
+
+query attacker(k_s).
+query attacker(test).
+query m:bitstring,k:key; inj-event(serverTerms1(m,k))==>inj-event(IOTAccepts(m,k)).
+query m:bitstring,k:key; inj-event(IOTTerms(m,k))==>inj-event(serverAccepts(m,k)).
+query m:bitstring,k:key; inj-event(phoneTerms(m,k))==>inj-event(serverAccepts(m,k)).
+query m:bitstring,k:key; inj-event(serverTerms2(m,k))==>inj-event(phoneAccepts(m,k)).
+
+let IOT(A:host, k_ma:key) =
+
+(* IOT sends request to the server *)
+new IOTN1:nonce;
+let IOTHost = host_to_bitstring(A) in
+let IOTh1 = Hash1(IOTN1,IOTHost,k_ma) in
+let IOTm1 = senc((IOTN1,IOTHost),k_ma) in
+out(c,(IOTm1,IOTh1));
+
+(* IOT receives server feedback *)
+in(c,(Serm2:bitstring,Serh2:bitstring));
+let (SerN2:nonce, SerN1:nonce, IOTID:bitstring) = sdec(Serm2,k_ma) in
+if Serh2 = Hash2(SerN2, IOTN1, IOTID, k_ma) then event IOTAccepts(k_s, k_ma);
+
+(* IOT sends information to Server *)
+let IOTm3 = senc((SerN2,k_s),k_ma) in
+let IOTh3 = Hash1(SerN2, k_s, k_ma) in
+out(c,(IOTm3, IOTh3));
+event IOTTerms(IOTHost, k_ma).
+
+
+let Server(A:host,B:host,k_ma:key,k_mb:key) =
+
+(* server receives the data from IOT *)
+in(c,(IOTm1:bitstring,IOTh1:bitstring));
+let (IOTN1:nonce,IOTHost:bitstring) = sdec(IOTm1,k_ma) in
+let HostA = host_to_bitstring(A) in
+if Hash1(IOTN1,HostA,k_ma) = IOTh1 then event serverAccepts(IOTHost,k_ma);
+
+(* server sends confirmation back to IOT *)
+new SerN2:nonce;
+let Serm2 = senc((SerN2, IOTN1, HostA),k_ma) in
+let Serh2 = Hash2(SerN2, IOTN1, HostA, k_ma) in
+out(c, (Serm2, Serh2));
+
+(* server recieves data from IOT *)
+in(c, (IOTm3:bitstring, IOTh3:bitstring));
+let (IOTN2:nonce, ks:bitstring) = sdec(IOTm3, k_ma) in
+if Hash1(SerN2, ks, k_ma) = IOTh3 then event serverTerms1(ks, k_ma);
+
+(* server receives the request from the phone *)
+in(c,(Phonem4:bitstring,Phoneh4:bitstring));
+let (PhoneN3:nonce,PhoneHost:bitstring) = sdec(Phonem4,k_mb) in
+let HostB = host_to_bitstring(B) in
+if Hash1(PhoneN3,HostB,k_mb) = Phoneh4 then event serverAccepts(ks,k_mb);
+
+(* server sends the data to the phone *)
+new SerN4:nonce;
+let Serm5 = senc((SerN4,PhoneN3,HostB),k_mb) in
+let Serh5 = Hash2(SerN4,PhoneN3,HostB,k_mb) in
+out(c,(Serm5,Serh5));
+
+(* server receives confirmation *)
+in(c,(Phonem6:bitstring,Phoneh6:bitstring));
+let (PhoneN5:nonce,PhoneN4:nonce,PhoneID:bitstring) = sdec(Phonem6,k_mb) in
+if Hash2(PhoneN5,SerN4,HostB,k_mb) = Phoneh6 then
+let Serm7 = senc((PhoneN5, ks), k_mb) in
+let Serh7 = Hash1(PhoneN5, ks, k_mb) in
+out(c,(Serm7,Serh7));
+event serverTerms2(PhoneHost,k_mb).
+
+
+let Phone(B:host,k_mb:key) =
+
+(* phone sends request to the server *)
+new PhoneN3:nonce;
+let PhoneHost = host_to_bitstring(B) in
+let Phonem4 = senc((PhoneN3,PhoneHost),k_mb) in
+let Phoneh4 = Hash1(PhoneN3,PhoneHost,k_mb) in
+out(c,(Phonem4,Phoneh4));
+
+(* phone receives the confirmation from the server *)
+in(c,(Serm5:bitstring,Serh5:bitstring));
+let (SerN4:nonce,SerN3:bitstring, HostB:bitstring) = sdec(Serm5,k_mb) in
+if Hash2(SerN4,PhoneN3,PhoneHost,k_mb) = Serh5 then event phoneAccepts(PhoneHost,k_mb);
+
+(* phone sends confirmation to the server *)
+new PhoneN5:nonce;
+let Phonem6 = senc((PhoneN5,SerN4,PhoneHost),k_mb) in
+let Phoneh6 = Hash2(PhoneN5,SerN4,PhoneHost,k_mb) in
+out(c,(Phonem6,Phoneh6));
+
+(* phone receives IOT info from server *)
+in(c, (Serm7:bitstring, Serh7:bitstring));
+let (SerN5:nonce, ks:bitstring) = sdec(Serm7, k_mb) in
+if Hash1(PhoneN5, ks, k_mb) = Serh7 then event phoneTerms(ks, k_mb);
+out(c, test).
+
+
+
+process
+new k_ma:key;
+new k_mb:key;
+new A:host;
+new B:host;
+( (!IOT(A,k_ma)) | (!Server(A,B,k_ma,k_mb)) | (!Phone(B,k_mb)))
